@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Title cards</title>
+<style>
+  @font-face {
+    font-family: "Space Grotesk";
+    font-weight: 700;
+    font-style: normal;
+    src: url("fonts/SpaceGrotesk-700.woff2") format("woff2");
+  }
+  html, body { margin: 0; background: #0b0b0f; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script type="module">
+import {
+  W, H, FPS, BG, INK, ACCENT, FONT_FAMILY, FONT_WEIGHT, FONT_SIZE, MIN_FONT_SIZE,
+  MARGIN, RISE, FADE_IN, FADE_OUT, LEAD, GAP, TAIL, LINES
+} from './tokens.js';
+
+const canvas = document.getElementById('c');
+canvas.width = W;
+canvas.height = H;
+const ctx = canvas.getContext('2d');
+
+// ---- Timeline: built once from constants, never from the clock ----
+const cards = [];
+let cursor = LEAD;
+LINES.forEach((raw, i) => {
+  const words = raw.split(/\s+/).filter(Boolean).map(w => ({
+    text: w.replace(/\*/g, ''),
+    accent: w.includes('*'),
+  }));
+  if (words.length < 1 || words.length > 6) throw new Error(`Line ${i}: needs 1-6 words`);
+  if (words.filter(w => w.accent).length !== 1) throw new Error(`Line ${i}: mark exactly one *word*`);
+  const hold = Math.max(1.2, 0.35 + words.length / 3.2);
+  const start = cursor;
+  const end = start + FADE_IN + hold + FADE_OUT;
+  cards.push({ words, text: words.map(w => w.text).join(' '), start, hold, end });
+  cursor = end + GAP;
+});
+const total = cards[cards.length - 1].end + TAIL;
+const DURATION = Math.ceil(total * FPS) / FPS;
+if (DURATION < 15 || DURATION > 20) {
+  throw new Error(`Duration ${DURATION.toFixed(2)}s is outside 15-20s; adjust LEAD/GAP/TAIL or LINES in tokens.js`);
+}
+
+// ---- Helpers ----
+const clamp01 = x => Math.min(1, Math.max(0, x));
+const easeOutCubic = x => 1 - Math.pow(1 - x, 3);
+const fontAt = size => `${FONT_WEIGHT} ${size}px "${FONT_FAMILY}"`;
+
+function layout(card) {
+  // Find the largest size (<= FONT_SIZE) at which the line fits inside the margins.
+  const maxW = W - MARGIN * 2;
+  let size = FONT_SIZE;
+  for (;;) {
+    ctx.font = fontAt(size);
+    const space = ctx.measureText(' ').width;
+    const widths = card.words.map(w => ctx.measureText(w.text).width);
+    const width = widths.reduce((a, b) => a + b, 0) + space * (widths.length - 1);
+    if (width <= maxW) return { size, space, widths, width };
+    size = Math.floor(size * maxW / width) - 1;
+    if (size < MIN_FONT_SIZE) throw new Error(`"${card.text}" is too long to fit`);
+  }
+}
+
+function drawCard(card, t) {
+  const local = t - card.start;
+  let alpha, rise;
+  if (local < FADE_IN) {
+    const p = easeOutCubic(clamp01(local / FADE_IN));
+    alpha = p;
+    rise = (1 - p) * RISE;
+  } else if (local < FADE_IN + card.hold) {
+    alpha = 1;
+    rise = 0;
+  } else {
+    alpha = 1 - clamp01((local - FADE_IN - card.hold) / FADE_OUT);
+    rise = 0;
+  }
+  if (alpha <= 0) return;
+
+  const L = layout(card);
+  ctx.font = fontAt(L.size);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  const capH = ctx.measureText('H').actualBoundingBoxAscent;
+  const baseline = Math.round(H / 2 + capH / 2 + rise);
+  let x = Math.round((W - L.width) / 2);
+
+  ctx.globalAlpha = alpha;
+  card.words.forEach((w, i) => {
+    ctx.fillStyle = w.accent ? ACCENT : INK;
+    ctx.fillText(w.text, x, baseline);
+    x += L.widths[i] + L.space;
+  });
+  ctx.globalAlpha = 1;
+}
+
+// ---- The one public draw function: pure function of t ----
+function renderFrame(t) {
+  ctx.globalAlpha = 1;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, W, H);
+  for (const card of cards) {
+    if (t >= card.start && t < card.end) drawCard(card, t);
+  }
+}
+
+window.renderFrame = renderFrame;
+window.DURATION = DURATION;
+window.FPS = FPS;
+window.CARDS = cards.map(c => ({ text: c.text, start: c.start, hold: c.hold, end: c.end }));
+window.FONT_OK = false;
+window.READY = false;
+
+(async () => {
+  await document.fonts.load(`700 168px "${FONT_FAMILY}"`);
+  await document.fonts.ready;
+  window.FONT_OK = document.fonts.check(`700 168px "${FONT_FAMILY}"`) &&
+    [...document.fonts].some(f => f.family.replace(/"/g, '') === FONT_FAMILY && f.status === 'loaded');
+  renderFrame(0);
+  window.READY = true;
+})();
+</script>
+</body>
+</html>
