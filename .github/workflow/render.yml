@@ -1,0 +1,22 @@
+name: Render title cards
+on: workflow_dispatch
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npm run font
+      - run: npm run stills
+      - run: npm run render
+      - run: npm run encode
+      - uses: actions/upload-artifact@v4
+        with:
+          name: title-cards
+          path: |
+            out/title_cards.mp4
+            stills/*.png
